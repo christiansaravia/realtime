@@ -16,7 +16,7 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import { RealtimeClient } from '@openai/realtime-api-beta';
 import { ItemType } from '@openai/realtime-api-beta/dist/lib/client.js';
 import { WavRecorder, WavStreamPlayer } from '../lib/wavtools/index.js';
-import { instructions } from '../utils/conversation_config.js';
+import { instructions, AVAILABLE_PRODUCTS } from '../utils/conversation_config.js';
 import { WavRenderer } from '../utils/wav_renderer';
 
 import { X, Edit, Zap, ArrowUp, ArrowDown } from 'react-feather';
@@ -26,6 +26,12 @@ import { Map } from '../components/Map';
 
 import './ConsolePage.scss';
 import { isJsxOpeningLikeElement } from 'typescript';
+import axios from 'axios';
+
+// Add this type guard function at the top of your file, outside of any component or function
+function isAxiosError(error: any): error is Error & { response?: { status?: number, data?: any } } {
+  return error && error.isAxiosError === true;
+}
 
 /**
  * Type for result from get_weather() function call
@@ -184,8 +190,7 @@ export function ConsolePage() {
     client.sendUserMessageContent([
       {
         type: `input_text`,
-        text: `Hello!`,
-        // text: `For testing purposes, I want you to list ten car brands. Number each item, e.g. "one (or whatever number you are one): the item name".`
+        text: `Hello! I'm here to help you order milk products. Here are the available products:\n\n${AVAILABLE_PRODUCTS.map((p: { name: string, sku: string }) => `${p.name} (SKU: ${p.sku})`).join('\n')}\n\nHow can I assist you today?`,
       },
     ]);
 
@@ -452,6 +457,60 @@ export function ConsolePage() {
         };
         setMarker({ lat, lng, location, temperature, wind_speed });
         return json;
+      }
+    );
+    client.addTool(
+      {
+        name: 'place_order',
+        description: 'Places an order with the given SKUs and quantities.',
+        parameters: {
+          type: 'object',
+          properties: {
+            skus: {
+              type: 'string',
+              description: 'Comma-separated list of SKUs and quantities, e.g., "SKU1,QTY1,SKU2,QTY2"',
+            },
+          },
+          required: ['skus'],
+        },
+      },
+      async ({ skus }: { skus: string }) => {
+        const url = 'https://api-global.yalochat.com/workflows/interpreter/v1/triggers/6708be67897ff3f8defb2a69/webhook?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhVlpnVzZ6d2RwSm5sN2NUaXhabmdYOTFWRjFkQ2xPeSJ9.F6GEAsIy_ER_YLQy8nlf4jTRL94fVO106jif5bXqpkI';
+        
+        try {
+          const response = await axios.post(url, {
+            userId: "50246980100",
+            data: {
+              skus: skus,
+              goal: "ocb"
+            }
+          });
+          
+          return { success: true, message: 'Order placed successfully', data: response.data };
+        } catch (error: unknown) {
+          console.error('Error placing order:', error);
+          if (isAxiosError(error)) {
+            return { 
+              success: false, 
+              message: 'Failed to place order', 
+              error: error.message,
+              status: error.response?.status,
+              data: error.response?.data
+            };
+          } else if (error instanceof Error) {
+            return { 
+              success: false, 
+              message: 'Failed to place order', 
+              error: error.message
+            };
+          } else {
+            return { 
+              success: false, 
+              message: 'Failed to place order', 
+              error: 'An unknown error occurred'
+            };
+          }
+        }
       }
     );
 
