@@ -125,10 +125,7 @@ export function ConsolePage() {
   const [canPushToTalk, setCanPushToTalk] = useState(true);
   const [isRecording, setIsRecording] = useState(false);
   const [memoryKv, setMemoryKv] = useState<{ [key: string]: any }>({});
-  const [coords, setCoords] = useState<Coordinates | null>({
-    lat: 37.775593,
-    lng: -122.418137,
-  });
+  const [coords, setCoords] = useState<Coordinates | null>(null);
   const [marker, setMarker] = useState<Coordinates | null>(null);
 
   /**
@@ -190,13 +187,13 @@ export function ConsolePage() {
     client.sendUserMessageContent([
       {
         type: `input_text`,
-        text: `Hello! I'm here to help you order milk products. Here are the available products:\n\n${AVAILABLE_PRODUCTS.map((p: { name: string, sku: string }) => `${p.name} (SKU: ${p.sku})`).join('\n')}\n\nHow can I assist you today?`,
+        text: `Hello! I'm Yalo's sales agent. I'm here to help you order products. I'll need your phone number to process any orders. Here are the available products:\n\n${AVAILABLE_PRODUCTS.map((p: { name: string, sku: string }) => `${p.name} (SKU: ${p.sku})`).join('\n')}\n\nCan you please provide your phone number, starting with the country code?`,
       },
     ]);
 
-    if (client.getTurnDetectionType() === 'server_vad') {
-      await wavRecorder.record((data) => client.appendInputAudio(data.mono));
-    }
+    // Always use server VAD
+    client.updateSession({ turn_detection: { type: 'server_vad' } });
+    await wavRecorder.record((data) => client.appendInputAudio(data.mono));
   }, []);
 
   /**
@@ -207,10 +204,7 @@ export function ConsolePage() {
     setRealtimeEvents([]);
     setItems([]);
     setMemoryKv({});
-    setCoords({
-      lat: 37.775593,
-      lng: -122.418137,
-    });
+    setCoords(null);
     setMarker(null);
 
     const client = clientRef.current;
@@ -254,24 +248,6 @@ export function ConsolePage() {
     const wavRecorder = wavRecorderRef.current;
     await wavRecorder.pause();
     client.createResponse();
-  };
-
-  /**
-   * Switch between Manual <> VAD mode for communication
-   */
-  const changeTurnEndType = async (value: string) => {
-    const client = clientRef.current;
-    const wavRecorder = wavRecorderRef.current;
-    if (value === 'none' && wavRecorder.getStatus() === 'recording') {
-      await wavRecorder.pause();
-    }
-    client.updateSession({
-      turn_detection: value === 'none' ? null : { type: 'server_vad' },
-    });
-    if (value === 'server_vad' && client.isConnected()) {
-      await wavRecorder.record((data) => client.appendInputAudio(data.mono));
-    }
-    setCanPushToTalk(value === 'none');
   };
 
   /**
@@ -462,37 +438,49 @@ export function ConsolePage() {
     client.addTool(
       {
         name: 'place_order',
-        description: 'Places an order with the given SKUs and quantities.',
+        description: 'Places an order with the given SKUs, quantities, user phone number, and order description.',
         parameters: {
           type: 'object',
           properties: {
             skus: {
               type: 'string',
-              description: 'Comma-separated list of SKUs and quantities, e.g., "SKU1,QTY1,SKU2,QTY2"',
+              description: 'Comma-separated list of SKUs and quantities, e.g., "V001,2,V003,1"',
+            },
+            userId: {
+              type: 'string',
+              description: "User's phone number with country code, e.g., '50246980100'",
+            },
+            orderName: {
+              type: 'string',
+              description: 'One-line description of the order placed',
             },
           },
-          required: ['skus'],
+          required: ['skus', 'userId', 'orderName'],
         },
       },
-      async ({ skus }: { skus: string }) => {
+      async ({ skus, userId, orderName }: { skus: string; userId: string; orderName: string }) => {
         const url = 'https://api-global.yalochat.com/workflows/interpreter/v1/triggers/6708be67897ff3f8defb2a69/webhook?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhVlpnVzZ6d2RwSm5sN2NUaXhabmdYOTFWRjFkQ2xPeSJ9.F6GEAsIy_ER_YLQy8nlf4jTRL94fVO106jif5bXqpkI';
         
         try {
           const response = await axios.post(url, {
-            userId: "50246980100",
+            userId: userId,
             data: {
               skus: skus,
-              goal: "ocb"
+              orderName: orderName
             }
           });
           
-          return { success: true, message: 'Order placed successfully', data: response.data };
+          return { 
+            success: true, 
+            message: 'Order placed successfully. You will receive a WhatsApp message to confirm your order and continue shopping if desired.', 
+            data: response.data 
+          };
         } catch (error: unknown) {
-          console.error('Error placing order:', error);
+          console.error('Error processing order:', error);
           if (isAxiosError(error)) {
             return { 
               success: false, 
-              message: 'Failed to place order', 
+              message: 'Failed to process order', 
               error: error.message,
               status: error.response?.status,
               data: error.response?.data
@@ -500,13 +488,13 @@ export function ConsolePage() {
           } else if (error instanceof Error) {
             return { 
               success: false, 
-              message: 'Failed to place order', 
+              message: 'Failed to process order', 
               error: error.message
             };
           } else {
             return { 
               success: false, 
-              message: 'Failed to place order', 
+              message: 'Failed to process order', 
               error: 'An unknown error occurred'
             };
           }
@@ -566,8 +554,7 @@ export function ConsolePage() {
     <div data-component="ConsolePage">
       <div className="content-top">
         <div className="content-title">
-          <img src="/openai-logomark.svg" />
-          <span>realtime console</span>
+          <img src="/yalo-logomark.svg" style={{ width: '48px' }} />
         </div>
         <div className="content-api-key">
           {!LOCAL_RELAY_SERVER_URL && (
@@ -582,207 +569,14 @@ export function ConsolePage() {
         </div>
       </div>
       <div className="content-main">
-        <div className="content-logs">
-          <div className="content-block events">
-            <div className="visualization">
-              <div className="visualization-entry client">
-                <canvas ref={clientCanvasRef} />
-              </div>
-              <div className="visualization-entry server">
-                <canvas ref={serverCanvasRef} />
-              </div>
-            </div>
-            <div className="content-block-title">events</div>
-            <div className="content-block-body" ref={eventsScrollRef}>
-              {!realtimeEvents.length && `awaiting connection...`}
-              {realtimeEvents.map((realtimeEvent, i) => {
-                const count = realtimeEvent.count;
-                const event = { ...realtimeEvent.event };
-                if (event.type === 'input_audio_buffer.append') {
-                  event.audio = `[trimmed: ${event.audio.length} bytes]`;
-                } else if (event.type === 'response.audio.delta') {
-                  event.delta = `[trimmed: ${event.delta.length} bytes]`;
-                }
-                return (
-                  <div className="event" key={event.event_id}>
-                    <div className="event-timestamp">
-                      {formatTime(realtimeEvent.time)}
-                    </div>
-                    <div className="event-details">
-                      <div
-                        className="event-summary"
-                        onClick={() => {
-                          // toggle event details
-                          const id = event.event_id;
-                          const expanded = { ...expandedEvents };
-                          if (expanded[id]) {
-                            delete expanded[id];
-                          } else {
-                            expanded[id] = true;
-                          }
-                          setExpandedEvents(expanded);
-                        }}
-                      >
-                        <div
-                          className={`event-source ${
-                            event.type === 'error'
-                              ? 'error'
-                              : realtimeEvent.source
-                          }`}
-                        >
-                          {realtimeEvent.source === 'client' ? (
-                            <ArrowUp />
-                          ) : (
-                            <ArrowDown />
-                          )}
-                          <span>
-                            {event.type === 'error'
-                              ? 'error!'
-                              : realtimeEvent.source}
-                          </span>
-                        </div>
-                        <div className="event-type">
-                          {event.type}
-                          {count && ` (${count})`}
-                        </div>
-                      </div>
-                      {!!expandedEvents[event.event_id] && (
-                        <div className="event-payload">
-                          {JSON.stringify(event, null, 2)}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-          <div className="content-block conversation">
-            <div className="content-block-title">conversation</div>
-            <div className="content-block-body" data-conversation-content>
-              {!items.length && `awaiting connection...`}
-              {items.map((conversationItem, i) => {
-                return (
-                  <div className="conversation-item" key={conversationItem.id}>
-                    <div className={`speaker ${conversationItem.role || ''}`}>
-                      <div>
-                        {(
-                          conversationItem.role || conversationItem.type
-                        ).replaceAll('_', ' ')}
-                      </div>
-                      <div
-                        className="close"
-                        onClick={() =>
-                          deleteConversationItem(conversationItem.id)
-                        }
-                      >
-                        <X />
-                      </div>
-                    </div>
-                    <div className={`speaker-content`}>
-                      {/* tool response */}
-                      {conversationItem.type === 'function_call_output' && (
-                        <div>{conversationItem.formatted.output}</div>
-                      )}
-                      {/* tool call */}
-                      {!!conversationItem.formatted.tool && (
-                        <div>
-                          {conversationItem.formatted.tool.name}(
-                          {conversationItem.formatted.tool.arguments})
-                        </div>
-                      )}
-                      {!conversationItem.formatted.tool &&
-                        conversationItem.role === 'user' && (
-                          <div>
-                            {conversationItem.formatted.transcript ||
-                              (conversationItem.formatted.audio?.length
-                                ? '(awaiting transcript)'
-                                : conversationItem.formatted.text ||
-                                  '(item sent)')}
-                          </div>
-                        )}
-                      {!conversationItem.formatted.tool &&
-                        conversationItem.role === 'assistant' && (
-                          <div>
-                            {conversationItem.formatted.transcript ||
-                              conversationItem.formatted.text ||
-                              '(truncated)'}
-                          </div>
-                        )}
-                      {conversationItem.formatted.file && (
-                        <audio
-                          src={conversationItem.formatted.file.url}
-                          controls
-                        />
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-          <div className="content-actions">
-            <Toggle
-              defaultValue={false}
-              labels={['manual', 'vad']}
-              values={['none', 'server_vad']}
-              onChange={(_, value) => changeTurnEndType(value)}
-            />
-            <div className="spacer" />
-            {isConnected && canPushToTalk && (
-              <Button
-                label={isRecording ? 'release to send' : 'push to talk'}
-                buttonStyle={isRecording ? 'alert' : 'regular'}
-                disabled={!isConnected || !canPushToTalk}
-                onMouseDown={startRecording}
-                onMouseUp={stopRecording}
-              />
-            )}
-            <div className="spacer" />
-            <Button
-              label={isConnected ? 'disconnect' : 'connect'}
-              iconPosition={isConnected ? 'end' : 'start'}
-              icon={isConnected ? X : Zap}
-              buttonStyle={isConnected ? 'regular' : 'action'}
-              onClick={
-                isConnected ? disconnectConversation : connectConversation
-              }
-            />
-          </div>
-        </div>
-        <div className="content-right">
-          <div className="content-block map">
-            <div className="content-block-title">get_weather()</div>
-            <div className="content-block-title bottom">
-              {marker?.location || 'not yet retrieved'}
-              {!!marker?.temperature && (
-                <>
-                  <br />
-                  🌡️ {marker.temperature.value} {marker.temperature.units}
-                </>
-              )}
-              {!!marker?.wind_speed && (
-                <>
-                  {' '}
-                  🍃 {marker.wind_speed.value} {marker.wind_speed.units}
-                </>
-              )}
-            </div>
-            <div className="content-block-body full">
-              {coords && (
-                <Map
-                  center={[coords.lat, coords.lng]}
-                  location={coords.location}
-                />
-              )}
-            </div>
-          </div>
-          <div className="content-block kv">
-            <div className="content-block-title">set_memory()</div>
-            <div className="content-block-body content-kv">
-              {JSON.stringify(memoryKv, null, 2)}
-            </div>
-          </div>
+        <div className="content-center">
+          <Button
+            label={isConnected ? 'disconnect' : "Talk with Yalo's sales agent"}
+            iconPosition={isConnected ? 'end' : 'start'}
+            icon={isConnected ? X : Zap}
+            buttonStyle={isConnected ? 'regular' : 'action'}
+            onClick={isConnected ? disconnectConversation : connectConversation}
+          />
         </div>
       </div>
     </div>
